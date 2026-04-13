@@ -1,0 +1,40 @@
+import time
+import os
+import pickle
+from datetime import datetime
+
+def monitor_progress():
+    """监控任务一运行进度"""
+    progress_file = "progress.pkl"
+    
+    print("开始监控day1程序进度...")
+    print("按Ctrl+C停止监控")
+    print("-" * 50)
+    
+    last_progress = -1
+    start_time = time.time()
+    
+    try:
+        while True:
+            if os.path.exists(progress_file):
+                try:
+                    with open(progress_file, 'rb') as f:
+                        current_progress = pickle.load(f)
+                    
+                    if current_progress != last_progress:
+                        elapsed = time.time() - start_time
+                        print(f"[{datetime.now().strftime('%H:%M:%S')}] 当前进度: {current_progress}")
+                        print(f"  运行时间: {elapsed:.1f}秒 ({elapsed/60:.1f}分钟)")
+                        last_progress = current_progress
+                except Exception as e:
+                    print(f"读取进度文件错误: {e}")
+            else:
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] 进度文件不存在")
+            
+            time.sleep(10)  # 每10秒检查一次
+            
+    except KeyboardInterrupt:
+        print("\n监控已停止")
+
+if __name__ == "__main__":
+    monitor_progress()

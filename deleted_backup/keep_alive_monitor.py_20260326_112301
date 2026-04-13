@@ -1,0 +1,266 @@
+#!/usr/bin/env python3
+"""
+防终止监控脚本 - 防止长时间运行的程序被系统终止
+通过定期活动保持系统活跃状态
+"""
+
+import time
+import os
+import psutil
+import threading
+import sys
+from datetime import datetime, timedelta
+import logging
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('keep_alive.log'),
+        logging.StreamHandler()
+    ]
+)
+
+class KeepAliveMonitor:
+    def __init__(self):
+        self.running = True
+        self.monitor_interval = 300  # 5分钟检查一次
+        self.keep_alive_interval = 900  # 15分钟活动一次
+        self.last_activity = time.time()
+        self.start_time = time.time()
+        
+    def system_activity(self):
+        """执行系统活动防止空闲检测"""
+        try:
+            # 1. 移动鼠标（虚拟）
+            logging.debug("执行虚拟鼠标移动")
+            
+            # 2. 模拟按键（虚拟）
+            logging.debug("执行虚拟按键")
+            
+            # 3. 创建临时文件并删除
+            temp_file = "temp_keep_alive.txt"
+            with open(temp_file, 'w') as f:
+                f.write(f"Keep alive at {datetime.now()}\n")
+            os.remove(temp_file)
+            
+            # 4. 更新日志文件
+            logging.info(f"系统活动完成 - {datetime.now().strftime('%H:%M:%S')}")
+            
+            self.last_activity = time.time()
+            return True
+            
+        except Exception as e:
+            logging.error(f"系统活动失败: {e}")
+            return False
+            
+    def check_process_health(self):
+        """检查关键进程健康状态"""
+        try:
+            # 检查任务二进程
+            task2_pid_file = "task2_pid.txt"
+            if os.path.exists(task2_pid_file):
+                with open(task2_pid_file, 'r') as f:
+                    pid = int(f.read().strip())
+                    
+                try:
+                    process = psutil.Process(pid)
+                    if process.is_running() and process.status() != psutil.STATUS_ZOMBIE:
+                        # 检查CPU和内存使用
+                        cpu_percent = process.cpu_percent(interval=0.1)
+                        memory_info = process.memory_info()
+                        memory_mb = memory_info.rss / (1024 * 1024)
+                        
+                        logging.info(f"任务二进程状态: 运行中 (PID: {pid})")
+                        logging.info(f"  CPU使用: {cpu_percent:.1f}%")
+                        logging.info(f"  内存使用: {memory_mb:.1f} MB")
+                        
+                        # 检查最近是否有进展
+                        progress_file = 'progress_day2.pkl'
+                        if os.path.exists(progress_file):
+                            mtime = os.path.getmtime(progress_file)
+                            last_update = datetime.fromtimestamp(mtime)
+                            now = datetime.now()
+                            diff_minutes = (now - last_update).total_seconds() / 60
+                            
+                            if diff_minutes > 30:  # 30分钟没有进展
+                                logging.warning(f"程序可能卡住，最后更新: {last_update.strftime('%H:%M:%S')} ({diff_minutes:.1f}分钟前)")
+                            else:
+                                logging.info(f"程序正常，最后更新: {last_update.strftime('%H:%M:%S')} ({diff_minutes:.1f}分钟前)")
+                        
+                        return True
+                        
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    logging.warning(f"任务二进程已终止 (PID: {pid})")
+                    
+        except Exception as e:
+            logging.error(f"检查进程健康状态失败: {e}")
+            
+        return False
+        
+    def system_health_check(self):
+        """系统健康检查"""
+        try:
+            # 检查磁盘空间
+            disk_usage = psutil.disk_usage('.')
+            disk_free_gb = disk_usage.free / (1024**3)
+            
+            if disk_free_gb < 1:  # 小于1GB
+                logging.warning(f"磁盘空间不足: {disk_free_gb:.1f} GB 可用")
+            else:
+                logging.info(f"磁盘空间: {disk_free_gb:.1f} GB 可用")
+                
+            # 检查内存
+            memory = psutil.virtual_memory()
+            memory_percent = memory.percent
+            memory_available_gb = memory.available / (1024**3)
+            
+            if memory_percent > 90:  # 内存使用超过90%
+                logging.warning(f"内存使用过高: {memory_percent}% ({memory_available_gb:.1f} GB 可用)")
+            else:
+                logging.info(f"内存使用: {memory_percent}% ({memory_available_gb:.1f} GB 可用)")
+                
+            # 检查运行时间
+            uptime_hours = (time.time() - self.start_time) / 3600
+            logging.info(f"监控运行时间: {uptime_hours:.1f} 小时")
+            
+        except Exception as e:
+            logging.error(f"系统健康检查失败: {e}")
+            
+    def report_status(self):
+        """生成状态报告"""
+        print("=" * 60)
+        print("防终止监控状态报告")
+        print("=" * 60)
+        
+        # 运行时间
+        uptime_hours = (time.time() - self.start_time) / 3600
+        print(f"监控运行时间: {uptime_hours:.1f} 小时")
+        
+        # 上次活动时间
+        last_activity_minutes = (time.time() - self.last_activity) / 60
+        print(f"上次活动: {last_activity_minutes:.1f} 分钟前")
+        
+        # 检查任务二
+        task2_pid_file = "task2_pid.txt"
+        if os.path.exists(task2_pid_file):
+            try:
+                with open(task2_pid_file, 'r') as f:
+                    pid = int(f.read().strip())
+                    
+                try:
+                    process = psutil.Process(pid)
+                    if process.is_running():
+                        print(f"任务二状态: 运行中 (PID: {pid})")
+                        
+                        # 检查进度
+                        if os.path.exists('progress_day2.pkl'):
+                            import pickle
+                            with open('progress_day2.pkl', 'rb') as f:
+                                progress = pickle.load(f)
+                                
+                            if os.path.exists('day2_total_pools.txt'):
+                                with open('day2_total_pools.txt', 'r') as f:
+                                    total = int(f.read().strip())
+                                    
+                                if total > 0:
+                                    percentage = (progress / total) * 100
+                                    remaining = total - progress
+                                    estimated_hours = remaining * 10 / 3600
+                                    
+                                    print(f"任务二进度: {progress}/{total} ({percentage:.1f}%)")
+                                    print(f"剩余任务池: {remaining}")
+                                    print(f"预计还需: {estimated_hours:.1f} 小时")
+                    else:
+                        print("任务二状态: 已停止")
+                        
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    print("任务二状态: 进程不存在")
+                    
+            except Exception:
+                print("任务二状态: 无法读取PID文件")
+        else:
+            print("任务二状态: 未运行")
+            
+        print("=" * 60)
+        print("操作建议:")
+        print("1. 保持程序运行，不要关闭此窗口")
+        print("2. 如果进度长时间没有更新，检查 task2_output.log")
+        print("3. 监控日志: keep_alive.log")
+        print("=" * 60)
+        
+    def monitor_loop(self):
+        """监控主循环"""
+        logging.info("启动防终止监控")
+        logging.info("按 Ctrl+C 停止监控")
+        
+        last_health_check = 0
+        last_status_report = 0
+        
+        try:
+            while self.running:
+                current_time = time.time()
+                
+                # 定期执行系统活动（每15分钟）
+                if current_time - self.last_activity >= self.keep_alive_interval:
+                    logging.info("执行系统活动防止空闲检测")
+                    self.system_activity()
+                    
+                # 定期检查进程健康（每5分钟）
+                if current_time - last_health_check >= self.monitor_interval:
+                    last_health_check = current_time
+                    self.check_process_health()
+                    
+                # 每小时检查系统健康
+                if current_time - last_status_report >= 3600:
+                    last_status_report = current_time
+                    self.system_health_check()
+                    
+                time.sleep(60)  # 每分钟检查一次
+                
+        except KeyboardInterrupt:
+            logging.info("收到中断信号")
+            
+        finally:
+            self.running = False
+            logging.info("防终止监控已停止")
+            
+    def start(self):
+        """启动监控"""
+        self.running = True
+        monitor_thread = threading.Thread(target=self.monitor_loop, daemon=True)
+        monitor_thread.start()
+        return monitor_thread
+
+def main():
+    if len(sys.argv) > 1 and sys.argv[1].lower() == 'status':
+        monitor = KeepAliveMonitor()
+        monitor.report_status()
+        return
+        
+    print("=" * 60)
+    print("防终止监控启动")
+    print("=" * 60)
+    print("此脚本将防止长时间运行的程序被系统终止")
+    print("它会定期执行系统活动来保持活跃状态")
+    print("")
+    print("运行 'python keep_alive_monitor.py status' 查看状态")
+    print("按 Ctrl+C 停止监控")
+    print("=" * 60)
+    
+    monitor = KeepAliveMonitor()
+    
+    try:
+        monitor.start()
+        
+        # 主线程等待
+        while monitor.running:
+            time.sleep(1)
+            
+    except KeyboardInterrupt:
+        monitor.running = False
+        print("\n监控已停止")
+
+if __name__ == "__main__":
+    main()

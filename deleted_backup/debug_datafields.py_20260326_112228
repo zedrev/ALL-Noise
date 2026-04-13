@@ -1,0 +1,76 @@
+import requests
+import pandas as pd
+from time import sleep
+
+def debug_get_datafields():
+    """调试get_datafields函数"""
+    username = "a1391289408@163.com"
+    password = "Mao197699REV"
+    
+    s = requests.Session()
+    s.auth = (username, password)
+    
+    print("登录...")
+    response = s.post('https://api.worldquantbrain.com/authentication')
+    
+    # 测试参数
+    instrument_type = 'EQUITY'
+    region = 'USA'
+    delay = 1
+    universe = 'TOP3000'
+    dataset_id = 'fundamental6'
+    search = ''
+    
+    print(f"\n测试获取数据集ID: {dataset_id}")
+    
+    if len(search) == 0:
+        url_template = "https://api.worldquantbrain.com/data-fields?" + \
+            f"&instrumentType={instrument_type}" + \
+            f"&region={region}&delay={str(delay)}&universe={universe}&dataset.id={dataset_id}&limit=50" + \
+            "&offset={x}"
+        
+        print(f"URL模板: {url_template}")
+        
+        # 先获取第一页看看响应结构
+        test_url = url_template.format(x=0)
+        print(f"\n请求URL: {test_url}")
+        
+        try:
+            response = s.get(test_url)
+            print(f"响应状态码: {response.status_code}")
+            
+            if response.status_code == 200:
+                data = response.json()
+                print(f"响应JSON键: {list(data.keys())}")
+                
+                if 'count' in data:
+                    count = data['count']
+                    print(f"数据字段总数: {count}")
+                else:
+                    print("响应中没有'count'字段")
+                    print(f"完整响应: {data}")
+                    return None
+                    
+                if 'results' in data:
+                    results = data['results']
+                    print(f"results字段长度: {len(results)}")
+                    if len(results) > 0:
+                        print(f"第一个结果: {results[0]}")
+                else:
+                    print("响应中没有'results'字段")
+                    return None
+            else:
+                print(f"请求失败: {response.status_code}")
+                print(f"响应内容: {response.content[:500]}")
+                return None
+                
+        except Exception as e:
+            print(f"发生错误: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    return "调试完成"
+
+if __name__ == "__main__":
+    debug_get_datafields()

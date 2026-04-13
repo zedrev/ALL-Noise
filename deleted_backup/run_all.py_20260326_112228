@@ -1,0 +1,41 @@
+import subprocess
+import sys
+import time
+import logging
+
+# ????
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def run_script(script_name):
+    """???????"""
+    try:
+        logging.info(f"???? {script_name}")
+        result = subprocess.run([sys.executable, script_name], capture_output=True, text=True, timeout=3600)  # 1????
+        if result.returncode == 0:
+            logging.info(f"{script_name} ????")
+            return True
+        else:
+            logging.error(f"{script_name} ????????: {result.returncode}")
+            logging.error(f"????: {result.stdout}")
+            logging.error(f"????: {result.stderr}")
+            return False
+    except subprocess.TimeoutExpired:
+        logging.error(f"{script_name} ????")
+        return False
+    except Exception as e:
+        logging.error(f"?? {script_name} ???: {e}")
+        return False
+
+def main():
+    scripts = ["day1????.py", "day2 ????.py", "day3 ????.py"]
+    
+    for script in scripts:
+        success = run_script(script)
+        if not success:
+            logging.warning(f"{script} ?????????")
+            break
+        # ????????????API??
+        time.sleep(10)  # ??10?
+
+if __name__ == "__main__":
+    main()

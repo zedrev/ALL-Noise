@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+
+# 项目特定 - 不忽略 bat 文件
+*.pkl
+*.log
+process_files/
+
+# 敏感信息（本地账号密码）
+credentials.json
+.env
+
+
+# 系统文件
+.DS_Store
+Thumbs.db

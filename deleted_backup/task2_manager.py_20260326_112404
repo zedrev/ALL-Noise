@@ -1,0 +1,308 @@
+#!/usr/bin/env python3
+"""
+任务二管理器 - 可靠的后台运行脚本
+防止长时间运行被系统终止
+"""
+
+import subprocess
+import sys
+import os
+import time
+import signal
+import psutil
+import pickle
+from datetime import datetime
+import logging
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('task2_manager.log'),
+        logging.StreamHandler()
+    ]
+)
+
+class Task2Manager:
+    def __init__(self):
+        self.process = None
+        self.pid_file = "task2_pid.txt"
+        self.max_restarts = 10  # 最大重启次数
+        self.restart_count = 0
+        self.check_interval = 300  # 检查间隔（秒）
+        self.last_check = time.time()
+        
+    def get_current_progress(self):
+        """获取当前进度"""
+        try:
+            with open('progress_day2.pkl', 'rb') as f:
+                return pickle.load(f)
+        except (FileNotFoundError, EOFError, pickle.UnpicklingError):
+            return 0
+            
+    def get_total_pools(self):
+        """获取总任务池数量"""
+        try:
+            with open('day2_total_pools.txt', 'r') as f:
+                return int(f.read().strip())
+        except (FileNotFoundError, ValueError):
+            return 1155  # 默认值
+            
+    def save_pid(self):
+        """保存进程ID"""
+        if self.process and self.process.pid:
+            with open(self.pid_file, 'w') as f:
+                f.write(str(self.process.pid))
+            logging.info(f"已保存进程ID: {self.process.pid}")
+            
+    def load_pid(self):
+        """加载进程ID"""
+        try:
+            with open(self.pid_file, 'r') as f:
+                pid = int(f.read().strip())
+                return pid
+        except (FileNotFoundError, ValueError):
+            return None
+            
+    def is_process_alive(self, pid=None):
+        """检查进程是否存活"""
+        if pid is None:
+            pid = self.load_pid()
+            
+        if pid is None:
+            return False
+            
+        try:
+            process = psutil.Process(pid)
+            return process.is_running() and process.status() != psutil.STATUS_ZOMBIE
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return False
+            
+    def kill_process(self, pid=None):
+        """终止进程"""
+        if pid is None:
+            pid = self.load_pid()
+            
+        if pid:
+            try:
+                process = psutil.Process(pid)
+                process.terminate()
+                process.wait(timeout=10)
+                logging.info(f"已终止进程 {pid}")
+            except (psutil.NoSuchProcess, psutil.TimeoutExpired):
+                pass
+                
+    def start_task2(self):
+        """启动任务二"""
+        if self.is_process_alive():
+            logging.info("检测到任务二已在运行中")
+            return True
+            
+        logging.info("启动任务二...")
+        
+        # 检查进度
+        progress = self.get_current_progress()
+        total = self.get_total_pools()
+        
+        if progress >= total:
+            logging.info(f"任务已完成 ({progress}/{total})，无需运行")
+            return False
+            
+        logging.info(f"从进度 {progress}/{total} 继续运行")
+        logging.info(f"剩余任务池: {total - progress}")
+        logging.info(f"剩余alpha: {(total - progress) * 3}")
+        
+        # 估计剩余时间（假设每个任务池需要10秒）
+        estimated_seconds = (total - progress) * 10
+        estimated_hours = estimated_seconds / 3600
+        logging.info(f"预计还需: {estimated_hours:.1f} 小时")
+        
+        # 启动程序
+        try:
+            self.process = subprocess.Popen(
+                [sys.executable, 'day2 运行程序.py'],
+                stdout=open('task2_output.log', 'a'),
+                stderr=subprocess.STDOUT,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
+            )
+            
+            self.save_pid()
+            self.restart_count += 1
+            
+            logging.info(f"任务二已启动，进程ID: {self.process.pid}")
+            logging.info(f"输出日志: task2_output.log")
+            logging.info(f"这是第 {self.restart_count} 次启动")
+            
+            return True
+            
+        except Exception as e:
+            logging.error(f"启动失败: {e}")
+            return False
+            
+    def monitor(self):
+        """监控进程状态"""
+        logging.info("开始监控任务二运行状态")
+        logging.info("按 Ctrl+C 停止监控")
+        logging.info("=" * 60)
+        
+        try:
+            while True:
+                current_time = time.time()
+                
+                # 每5分钟检查一次进程状态
+                if current_time - self.last_check >= self.check_interval:
+                    self.last_check = current_time
+                    
+                    # 检查进程是否存活
+                    if not self.is_process_alive():
+                        logging.warning("任务二进程已终止")
+                        
+                        # 检查是否超过最大重启次数
+                        if self.restart_count >= self.max_restarts:
+                            logging.error(f"已达到最大重启次数 ({self.max_restarts})")
+                            logging.error("请检查程序是否存在严重错误")
+                            break
+                            
+                        # 尝试重启
+                        logging.info("尝试重新启动...")
+                        if self.start_task2():
+                            logging.info("重启成功")
+                        else:
+                            logging.error("重启失败")
+                    else:
+                        # 检查进度更新
+                        progress_file = 'progress_day2.pkl'
+                        if os.path.exists(progress_file):
+                            mtime = os.path.getmtime(progress_file)
+                            if mtime > self.last_check - 600:  # 最近10分钟内有更新
+                                progress = self.get_current_progress()
+                                total = self.get_total_pools()
+                                
+                                if progress < total:
+                                    percentage = (progress / total) * 100
+                                    remaining = total - progress
+                                    logging.info(f"进度: {progress}/{total} ({percentage:.1f}%) - 剩余: {remaining}个任务池")
+                                else:
+                                    logging.info("任务已完成！")
+                                    break
+                        
+                    # 输出状态报告
+                    pid = self.load_pid()
+                    if pid:
+                        logging.info(f"进程状态: 运行中 (PID: {pid})")
+                    else:
+                        logging.info("进程状态: 未运行")
+                        
+                time.sleep(30)  # 每30秒检查一次
+                
+        except KeyboardInterrupt:
+            logging.info("收到中断信号")
+            
+        finally:
+            self.cleanup()
+            
+    def cleanup(self):
+        """清理资源"""
+        logging.info("清理资源...")
+        
+        # 检查是否需要终止进程
+        pid = self.load_pid()
+        if pid and self.is_process_alive(pid):
+            response = input("是否终止任务二进程？(y/N): ").strip().lower()
+            if response == 'y':
+                self.kill_process(pid)
+                
+        # 删除PID文件
+        if os.path.exists(self.pid_file):
+            os.remove(self.pid_file)
+            logging.info(f"已删除PID文件: {self.pid_file}")
+            
+    def show_status(self):
+        """显示状态"""
+        print("=" * 60)
+        print("任务二管理器状态")
+        print("=" * 60)
+        
+        pid = self.load_pid()
+        if pid:
+            print(f"进程ID: {pid}")
+            alive = self.is_process_alive(pid)
+            print(f"进程状态: {'运行中' if alive else '已停止'}")
+        else:
+            print("进程状态: 未运行")
+            
+        progress = self.get_current_progress()
+        total = self.get_total_pools()
+        print(f"当前进度: {progress}/{total} 个任务池")
+        
+        if total > 0:
+            percentage = (progress / total) * 100
+            print(f"完成比例: {percentage:.1f}%")
+            
+            if progress < total:
+                remaining = total - progress
+                estimated_hours = remaining * 10 / 3600  # 每个任务池10秒
+                print(f"剩余任务池: {remaining}")
+                print(f"预计还需: {estimated_hours:.1f} 小时")
+            else:
+                print("任务已完成！")
+                
+        print(f"重启次数: {self.restart_count}/{self.max_restarts}")
+        print("=" * 60)
+        
+        if os.path.exists('task2_output.log'):
+            print("输出日志: task2_output.log")
+        if os.path.exists('task2_manager.log'):
+            print("管理器日志: task2_manager.log")
+
+def main():
+    if len(sys.argv) < 2:
+        print("用法:")
+        print("  python task2_manager.py start    - 启动任务二")
+        print("  python task2_manager.py monitor  - 监控任务二")
+        print("  python task2_manager.py status   - 查看状态")
+        print("  python task2_manager.py stop     - 停止任务二")
+        print("  python task2_manager.py restart  - 重启任务二")
+        return
+        
+    manager = Task2Manager()
+    command = sys.argv[1].lower()
+    
+    if command == 'start':
+        if manager.start_task2():
+            print("任务二已启动")
+            print("运行 'python task2_manager.py monitor' 监控进度")
+        else:
+            print("启动失败")
+            
+    elif command == 'monitor':
+        manager.monitor()
+        
+    elif command == 'status':
+        manager.show_status()
+        
+    elif command == 'stop':
+        pid = manager.load_pid()
+        if pid and manager.is_process_alive(pid):
+            manager.kill_process(pid)
+            print("任务二已停止")
+        else:
+            print("任务二未运行")
+            
+    elif command == 'restart':
+        pid = manager.load_pid()
+        if pid and manager.is_process_alive(pid):
+            manager.kill_process(pid)
+            print("已停止任务二")
+            
+        if manager.start_task2():
+            print("任务二已重启")
+        else:
+            print("重启失败")
+            
+    else:
+        print(f"未知命令: {command}")
+
+if __name__ == "__main__":
+    main()

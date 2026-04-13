@@ -1,0 +1,98 @@
+@echo off
+chcp 65001 >nul
+title 任务二 - 安全启动模式
+
+echo ========================================
+echo 任务二安全启动模式
+echo ========================================
+echo 此模式将防止程序因长时间运行而被系统终止
+echo.
+
+:: 检查是否已安装psutil
+python -c "import psutil" 2>nul
+if errorlevel 1 (
+    echo 正在安装必需的Python包...
+    pip install psutil --quiet
+    if errorlevel 1 (
+        echo 安装psutil失败，但将继续运行
+    )
+)
+
+:: 检查Python脚本是否存在
+if not exist "task2_manager.py" (
+    echo 错误: task2_manager.py 不存在
+    pause
+    exit /b 1
+)
+
+:: 显示当前状态
+echo 检查当前状态...
+python check_day2_status.py
+
+echo.
+echo ========================================
+echo 启动选项:
+echo 1. 启动任务二并监控
+echo 2. 仅启动任务二
+echo 3. 启动防终止监控
+echo 4. 启动故障恢复监控
+echo 5. 显示状态
+echo 6. 退出
+echo ========================================
+
+set /p choice="请选择 (1-6): "
+
+if "%choice%"=="1" (
+    echo 启动任务二并监控...
+    echo 这将启动任务二并同时运行防终止监控
+    echo.
+    start "任务二管理器" python task2_manager.py monitor
+    timeout /t 3 /nobreak >nul
+    start "防终止监控" python keep_alive_monitor.py
+    echo 启动完成
+    echo 请在任务管理器中查看运行的程序
+)
+
+if "%choice%"=="2" (
+    echo 启动任务二...
+    python task2_manager.py start
+    if errorlevel 1 (
+        echo 启动失败
+        pause
+        exit /b 1
+    )
+    echo 启动成功
+    echo 运行 'python task2_manager.py monitor' 监控进度
+)
+
+if "%choice%"=="3" (
+    echo 启动防终止监控...
+    start "防终止监控" python keep_alive_monitor.py
+    echo 监控已启动
+)
+
+if "%choice%"=="4" (
+    echo 启动故障恢复监控...
+    start "故障恢复监控" python recovery_manager.py monitor
+    echo 监控已启动
+)
+
+if "%choice%"=="5" (
+    echo 显示状态...
+    python task2_manager.py status
+    echo.
+    python keep_alive_monitor.py status
+)
+
+if "%choice%"=="6" (
+    echo 退出
+    exit /b 0
+)
+
+echo.
+echo ========================================
+echo 操作完成
+echo 注意: 程序将在后台运行
+echo 要停止程序，请使用任务管理器
+echo ========================================
+pause

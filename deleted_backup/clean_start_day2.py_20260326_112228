@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+# 清理并重新启动任务二
+
+import os
+import subprocess
+import sys
+import time
+
+def stop_python_processes():
+    """停止所有Python进程（除了当前脚本）"""
+    print("停止现有的Python进程...")
+    
+    try:
+        # 在Windows上停止Python进程
+        import psutil
+        current_pid = os.getpid()
+        
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+            try:
+                if 'python' in proc.info['name'].lower():
+                    if proc.info['pid'] != current_pid:
+                        cmdline = ' '.join(proc.info['cmdline']) if proc.info['cmdline'] else ''
+                        if 'day1' in cmdline or 'day2' in cmdline or 'day3' in cmdline:
+                            print(f"停止进程 {proc.info['pid']}: {proc.info['name']}")
+                            proc.terminate()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        
+        print("等待进程停止...")
+        time.sleep(3)
+        
+    except ImportError:
+        print("psutil未安装，使用taskkill命令")
+        subprocess.run(['taskkill', '/F', '/IM', 'python*.exe'], 
+                      capture_output=True, text=True)
+
+def check_api_limit():
+    """检查API限制"""
+    print("检查API状态...")
+    
+    try:
+        from machine_lib import login
+        s = login()
+        print("API连接正常")
+        return s
+    except Exception as e:
+        print(f"API连接错误: {e}")
+        return None
+
+def start_day2():
+    """启动任务二程序"""
+    print("=" * 60)
+    print("启动任务二：二阶alpha模拟")
+    print("=" * 60)
+    
+    # 检查进度
+    if os.path.exists('progress_day2.pkl') and os.path.exists('day2_total_pools.txt'):
+        import pickle
+        with open('progress_day2.pkl', 'rb') as f:
+            progress = pickle.load(f)
+        with open('day2_total_pools.txt', 'r') as f:
+            total = int(f.read().strip())
+        
+        if progress >= total:
+            print(f"任务已完成 ({progress}/{total})")
+            print("无需再次运行")
+            return
+        else:
+            print(f"从进度 {progress}/{total} 继续运行")
+            print(f"剩余任务池: {total - progress}")
+            print(f"剩余alpha: {(total - progress) * 3}")
+    else:
+        print("从开始运行")
+    
+    print("正在启动模拟...")
+    
+    # 运行day2程序
+    proc = subprocess.Popen(
+        [sys.executable, 'day2 运行程序.py'],
+        stdout=sys.stdout,
+        stderr=sys.stderr
+    )
+    
+    print(f"程序已启动，进程ID: {proc.pid}")
+    print("")
+    print("重要提醒:")
+    print("1. 不要同时运行多个模拟程序")
+    print("2. 每个alpha模拟约2分钟")
+    print("3. 总预计时间: 约36小时")
+    print("4. 程序支持断点续传")
+    print("")
+    print("监控进度: python check_day2_status.py")
+    print("=" * 60)
+    
+    return proc
+
+def main():
+    print("清理并重新启动任务二")
+    print("=" * 60)
+    
+    # 1. 停止现有进程
+    stop_python_processes()
+    
+    # 2. 等待API限制重置
+    print("等待API限制重置...")
+    time.sleep(10)
+    
+    # 3. 检查API
+    session = check_api_limit()
+    if not session:
+        print("API连接失败，请稍后重试")
+        return
+    
+    # 4. 启动day2
+    proc = start_day2()
+    
+    if proc:
+        try:
+            # 等待程序运行一段时间
+            time.sleep(10)
+            
+            # 检查是否正常运行
+            if proc.poll() is None:
+                print("程序正在正常运行")
+            else:
+                print(f"程序已退出，返回码: {proc.returncode}")
+                
+        except KeyboardInterrupt:
+            print("\n收到中断信号")
+            proc.terminate()
+            proc.wait()
+            print("程序已停止")
+
+if __name__ == "__main__":
+    main()

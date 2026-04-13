@@ -1,0 +1,427 @@
+#!/usr/bin/env python3
+"""
+故障恢复管理器 - 处理程序崩溃后的自动恢复
+"""
+
+import os
+import sys
+import time
+import pickle
+import subprocess
+import logging
+from datetime import datetime, timedelta
+import traceback
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('recovery.log'),
+        logging.StreamHandler()
+    ]
+)
+
+class RecoveryManager:
+    def __init__(self):
+        self.max_crash_count = 5  # 最大崩溃次数
+        self.crash_count = 0
+        self.last_crash_time = None
+        self.crash_interval = 300  # 5分钟内连续崩溃才计数
+        
+    def check_progress_validity(self):
+        """检查进度文件的有效性"""
+        progress_file = 'progress_day2.pkl'
+        total_file = 'day2_total_pools.txt'
+        
+        if not os.path.exists(progress_file):
+            logging.warning("进度文件不存在")
+            return False
+            
+        if not os.path.exists(total_file):
+            logging.warning("总任务池文件不存在")
+            return False
+            
+        try:
+            # 检查进度文件是否可以正常读取
+            with open(progress_file, 'rb') as f:
+                progress = pickle.load(f)
+                
+            with open(total_file, 'r') as f:
+                total = int(f.read().strip())
+                
+            if not isinstance(progress, int):
+                logging.warning(f"进度值类型无效: {type(progress)}")
+                return False
+                
+            if progress < 0 or progress > total * 2:  # 允许一些误差
+                logging.warning(f"进度值超出合理范围: {progress} (总任务池: {total})")
+                return False
+                
+            logging.info(f"进度文件有效: {progress}/{total}")
+            return True
+            
+        except Exception as e:
+            logging.error(f"检查进度文件失败: {e}")
+            return False
+            
+    def backup_progress(self):
+        """备份进度文件"""
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # 备份进度文件
+            if os.path.exists('progress_day2.pkl'):
+                backup_file = f"backup_progress_{timestamp}.pkl"
+                with open('progress_day2.pkl', 'rb') as src, open(backup_file, 'wb') as dst:
+                    dst.write(src.read())
+                logging.info(f"已备份进度文件: {backup_file}")
+                
+            # 备份总任务池文件
+            if os.path.exists('day2_total_pools.txt'):
+                backup_file = f"backup_total_{timestamp}.txt"
+                with open('day2_total_pools.txt', 'r') as src, open(backup_file, 'w') as dst:
+                    dst.write(src.read())
+                logging.info(f"已备份总任务池文件: {backup_file}")
+                
+            # 保留最近5个备份
+            self.cleanup_old_backups()
+            
+            return True
+            
+        except Exception as e:
+            logging.error(f"备份进度文件失败: {e}")
+            return False
+            
+    def cleanup_old_backups(self):
+        """清理旧的备份文件"""
+        try:
+            backup_files = []
+            
+            for filename in os.listdir('.'):
+                if filename.startswith('backup_progress_') and filename.endswith('.pkl'):
+                    backup_files.append(filename)
+                    
+            # 按修改时间排序，保留最新的5个
+            backup_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+            
+            for filename in backup_files[5:]:
+                os.remove(filename)
+                logging.info(f"已删除旧备份: {filename}")
+                
+        except Exception as e:
+            logging.error(f"清理备份文件失败: {e}")
+            
+    def analyze_crash(self):
+        """分析崩溃原因"""
+        crash_analysis = {
+            "timestamp": datetime.now().isoformat(),
+            "possible_causes": [],
+            "recommendations": []
+        }
+        
+        try:
+            # 检查输出日志
+            if os.path.exists('task2_output.log'):
+                with open('task2_output.log', 'r', encoding='utf-8', errors='ignore') as f:
+                    lines = f.readlines()
+                    
+                # 分析最后100行日志
+                last_lines = lines[-100:] if len(lines) >= 100 else lines
+                
+                error_keywords = ['error', 'exception', 'failed', 'traceback', '崩溃', '终止']
+                for line in reversed(last_lines):
+                    if any(keyword in line.lower() for keyword in error_keywords):
+                        crash_analysis["possible_causes"].append(f"程序错误: {line.strip()[:100]}")
+                        break
+                        
+            # 检查内存使用
+            import psutil
+            memory = psutil.virtual_memory()
+            if memory.percent > 90:
+                crash_analysis["possible_causes"].append("内存不足")
+                crash_analysis["recommendations"].append("关闭不必要的程序，释放内存")
+                
+            # 检查磁盘空间
+            disk_usage = psutil.disk_usage('.')
+            if disk_usage.free < 1024**3:  # 小于1GB
+                crash_analysis["possible_causes"].append("磁盘空间不足")
+                crash_analysis["recommendations"].append("清理磁盘空间")
+                
+            # 检查网络连接
+            crash_analysis["recommendations"].append("检查网络连接是否正常")
+            crash_analysis["recommendations"].append("检查API服务是否可用")
+            
+        except Exception as e:
+            logging.error(f"分析崩溃失败: {e}")
+            
+        return crash_analysis
+        
+    def handle_crash(self):
+        """处理程序崩溃"""
+        current_time = time.time()
+        
+        # 检查是否在短时间内连续崩溃
+        if self.last_crash_time and (current_time - self.last_crash_time) < self.crash_interval:
+            self.crash_count += 1
+            logging.warning(f"连续崩溃计数: {self.crash_count}/{self.max_crash_count}")
+        else:
+            self.crash_count = 1
+            
+        self.last_crash_time = current_time
+        
+        if self.crash_count >= self.max_crash_count:
+            logging.error(f"已达到最大崩溃次数 ({self.max_crash_count})")
+            logging.error("程序可能存在严重问题，建议手动检查")
+            return False
+            
+        # 备份进度文件
+        logging.info("正在备份进度文件...")
+        self.backup_progress()
+        
+        # 分析崩溃原因
+        logging.info("正在分析崩溃原因...")
+        analysis = self.analyze_crash()
+        
+        if analysis["possible_causes"]:
+            logging.info("可能的原因:")
+            for cause in analysis["possible_causes"]:
+                logging.info(f"  - {cause}")
+                
+        if analysis["recommendations"]:
+            logging.info("建议:")
+            for recommendation in analysis["recommendations"]:
+                logging.info(f"  - {recommendation}")
+                
+        # 尝试修复
+        if not self.check_progress_validity():
+            logging.warning("进度文件可能损坏，尝试使用最近的备份")
+            self.restore_from_backup()
+            
+        return True
+        
+    def restore_from_backup(self):
+        """从备份恢复"""
+        try:
+            # 查找最新的备份文件
+            backup_files = []
+            for filename in os.listdir('.'):
+                if filename.startswith('backup_progress_') and filename.endswith('.pkl'):
+                    backup_files.append(filename)
+                    
+            if backup_files:
+                backup_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+                latest_backup = backup_files[0]
+                
+                logging.info(f"尝试从备份恢复: {latest_backup}")
+                with open(latest_backup, 'rb') as src, open('progress_day2.pkl', 'wb') as dst:
+                    dst.write(src.read())
+                    
+                # 尝试恢复总任务池文件
+                backup_prefix = latest_backup.replace('backup_progress_', 'backup_total_').replace('.pkl', '.txt')
+                if os.path.exists(backup_prefix):
+                    with open(backup_prefix, 'r') as src, open('day2_total_pools.txt', 'w') as dst:
+                        dst.write(src.read())
+                        
+                logging.info("恢复完成")
+                return True
+                
+        except Exception as e:
+            logging.error(f"恢复备份失败: {e}")
+            
+        return False
+        
+    def auto_recovery(self):
+        """自动恢复流程"""
+        logging.info("启动自动恢复流程")
+        
+        # 1. 检查当前状态
+        if not self.check_progress_validity():
+            logging.warning("检测到进度文件问题，尝试修复")
+            if not self.restore_from_backup():
+                logging.error("无法恢复进度文件")
+                return False
+                
+        # 2. 检查是否有运行的进程
+        task2_pid_file = "task2_pid.txt"
+        if os.path.exists(task2_pid_file):
+            try:
+                with open(task2_pid_file, 'r') as f:
+                    pid = int(f.read().strip())
+                    
+                import psutil
+                try:
+                    process = psutil.Process(pid)
+                    if process.is_running():
+                        logging.info(f"检测到任务二正在运行 (PID: {pid})")
+                        return True
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+                    
+            except Exception:
+                pass
+                
+        # 3. 启动任务二
+        logging.info("尝试启动任务二...")
+        try:
+            progress = self.get_current_progress()
+            total = self.get_total_pools()
+            
+            if progress >= total:
+                logging.info(f"任务已完成 ({progress}/{total})")
+                return True
+                
+            # 使用任务管理器启动
+            proc = subprocess.Popen(
+                [sys.executable, 'task2_manager.py', 'start'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            
+            stdout, stderr = proc.communicate(timeout=30)
+            
+            if proc.returncode == 0:
+                logging.info("任务二启动成功")
+                return True
+            else:
+                logging.error(f"任务二启动失败: {stderr.decode('utf-8', errors='ignore')}")
+                return False
+                
+        except Exception as e:
+            logging.error(f"启动失败: {e}")
+            return False
+            
+    def get_current_progress(self):
+        """获取当前进度"""
+        try:
+            with open('progress_day2.pkl', 'rb') as f:
+                return pickle.load(f)
+        except:
+            return 0
+            
+    def get_total_pools(self):
+        """获取总任务池数量"""
+        try:
+            with open('day2_total_pools.txt', 'r') as f:
+                return int(f.read().strip())
+        except:
+            return 1155
+            
+    def monitor_and_recover(self):
+        """监控和恢复循环"""
+        logging.info("启动故障恢复监控")
+        logging.info("按 Ctrl+C 停止监控")
+        
+        last_check = 0
+        check_interval = 600  # 每10分钟检查一次
+        
+        try:
+            while True:
+                current_time = time.time()
+                
+                if current_time - last_check >= check_interval:
+                    last_check = current_time
+                    
+                    logging.info("执行定期检查...")
+                    
+                    # 检查程序是否运行
+                    task2_pid_file = "task2_pid.txt"
+                    program_running = False
+                    
+                    if os.path.exists(task2_pid_file):
+                        try:
+                            with open(task2_pid_file, 'r') as f:
+                                pid = int(f.read().strip())
+                                
+                            import psutil
+                            try:
+                                process = psutil.Process(pid)
+                                if process.is_running():
+                                    program_running = True
+                            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                pass
+                                
+                        except Exception:
+                            pass
+                            
+                    # 检查进度是否在更新
+                    if program_running:
+                        progress_file = 'progress_day2.pkl'
+                        if os.path.exists(progress_file):
+                            mtime = os.path.getmtime(progress_file)
+                            if current_time - mtime > 1800:  # 30分钟没有更新
+                                logging.warning("程序可能卡住，尝试恢复...")
+                                self.handle_crash()
+                                self.auto_recovery()
+                    else:
+                        logging.warning("程序未运行，尝试启动...")
+                        if not self.auto_recovery():
+                            logging.error("自动恢复失败")
+                            
+                time.sleep(60)  # 每分钟检查一次
+                
+        except KeyboardInterrupt:
+            logging.info("收到中断信号")
+            
+        finally:
+            logging.info("故障恢复监控已停止")
+
+def main():
+    if len(sys.argv) > 1:
+        command = sys.argv[1].lower()
+        manager = RecoveryManager()
+        
+        if command == 'check':
+            if manager.check_progress_validity():
+                print("✓ 进度文件有效")
+            else:
+                print("✗ 进度文件存在问题")
+                
+        elif command == 'backup':
+            if manager.backup_progress():
+                print("✓ 备份完成")
+            else:
+                print("✗ 备份失败")
+                
+        elif command == 'analyze':
+            analysis = manager.analyze_crash()
+            print("崩溃分析报告:")
+            print("=" * 60)
+            if analysis["possible_causes"]:
+                print("可能的原因:")
+                for cause in analysis["possible_causes"]:
+                    print(f"  - {cause}")
+            if analysis["recommendations"]:
+                print("\n建议:")
+                for recommendation in analysis["recommendations"]:
+                    print(f"  - {recommendation}")
+            print("=" * 60)
+            
+        elif command == 'recover':
+            if manager.auto_recovery():
+                print("✓ 恢复成功")
+            else:
+                print("✗ 恢复失败")
+                
+        elif command == 'monitor':
+            manager.monitor_and_recover()
+            
+        else:
+            print(f"未知命令: {command}")
+            print("可用命令: check, backup, analyze, recover, monitor")
+            
+    else:
+        print("故障恢复管理器")
+        print("=" * 60)
+        print("用法: python recovery_manager.py [command]")
+        print("")
+        print("可用命令:")
+        print("  check    - 检查进度文件有效性")
+        print("  backup   - 备份进度文件")
+        print("  analyze  - 分析可能的崩溃原因")
+        print("  recover  - 执行自动恢复")
+        print("  monitor  - 启动监控和恢复循环")
+        print("=" * 60)
+
+if __name__ == "__main__":
+    main()

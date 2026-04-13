@@ -1,0 +1,46 @@
+import requests
+import json
+
+def test_login():
+    """测试WorldQuant API登录"""
+    username = "a1391289408@163.com"
+    password = "Mao197699REV"
+    
+    s = requests.Session()
+    s.auth = (username, password)
+    
+    print("正在尝试登录...")
+    try:
+        response = s.post('https://api.worldquantbrain.com/authentication')
+        print(f"登录响应状态码: {response.status_code}")
+        print(f"登录响应内容: {response.content[:200]}")
+        
+        if response.status_code == 200:
+            print("登录成功！")
+            
+            # 测试获取数据集
+            print("\n正在获取数据集...")
+            url = "https://api.worldquantbrain.com/data-sets?" + \
+                  "instrumentType=EQUITY&region=USA&delay=1&universe=TOP3000"
+            result = s.get(url)
+            print(f"数据集响应状态码: {result.status_code}")
+            
+            if result.status_code == 200:
+                data = result.json()
+                print(f"找到 {data.get('count', 0)} 个数据集")
+                if 'results' in data and len(data['results']) > 0:
+                    print(f"第一个数据集ID: {data['results'][0].get('id', 'N/A')}")
+                    print(f"第一个数据集名称: {data['results'][0].get('name', 'N/A')}")
+                else:
+                    print("响应中没有'results'字段或为空")
+                    print(f"完整响应: {json.dumps(data, indent=2)[:500]}")
+            else:
+                print(f"获取数据集失败: {result.content}")
+                
+        return s
+    except Exception as e:
+        print(f"登录失败: {e}")
+        return None
+
+if __name__ == "__main__":
+    test_login()

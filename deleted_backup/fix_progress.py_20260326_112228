@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+import pickle
+import os
+
+print("=== 修复任务二进度文件 ===")
+
+# 删除旧日志
+log_files = ['task2_output.log', 'task2_manager.log']
+for log_file in log_files:
+    if os.path.exists(log_file):
+        os.remove(log_file)
+        print(f"删除: {log_file}")
+
+# 正确的进度文件格式：保存一个整数
+# 根据程序逻辑，保存的是已完成的任务池数量
+# 我们要从第100个任务池开始，所以已完成100个（0-99）
+processed_count = 100
+
+# 保存进度文件
+with open('progress_day2.pkl', 'wb') as f:
+    pickle.dump(processed_count, f)
+
+print("进度文件已修复:")
+print(f"已完成的任务池数量: {processed_count}")
+print(f"这意味着已完成 0-{processed_count-1} 的任务池")
+print(f"程序将从第 {processed_count} 个任务池开始")
+print("")
+print("修改完成！现在将从第100个任务池开始运行")
+
+# 检查day2_total_pools.txt文件
+if os.path.exists('day2_total_pools.txt'):
+    print("day2_total_pools.txt 文件存在")
+    with open('day2_total_pools.txt', 'r') as f:
+        total_pools = int(f.read().strip())
+    print(f"总任务池数: {total_pools}")
+    print(f"进度: {processed_count}/{total_pools}")
+else:
+    print("警告: day2_total_pools.txt 文件不存在")
+    print("程序运行时将重新生成")

@@ -1,0 +1,54 @@
+import requests
+import json
+
+def test_api():
+    """测试WorldQuant API连接"""
+    username = "a1391289408@163.com"
+    password = "Mao197699REV"
+    
+    s = requests.Session()
+    s.auth = (username, password)
+    
+    print("正在尝试登录...")
+    try:
+        response = s.post('https://api.worldquantbrain.com/authentication')
+        print(f"登录响应状态码: {response.status_code}")
+        
+        # 201表示成功创建（登录成功）
+        if response.status_code in [200, 201]:
+            print("登录成功！")
+            print(f"响应内容: {response.content[:500]}")
+            
+            # 测试获取数据集
+            print("\n正在获取数据集...")
+            url = "https://api.worldquantbrain.com/data-sets?instrumentType=EQUITY&region=USA&delay=1&universe=TOP3000"
+            result = s.get(url)
+            print(f"数据集响应状态码: {result.status_code}")
+            
+            if result.status_code == 200:
+                data = result.json()
+                count = data.get('count', 0)
+                print(f"找到 {count} 个数据集")
+                if 'results' in data:
+                    print(f"results字段存在，长度: {len(data['results'])}")
+                    if len(data['results']) > 0:
+                        print(f"第一个数据集ID: {data['results'][0].get('id', 'N/A')}")
+                        print(f"第一个数据集名称: {data['results'][0].get('name', 'N/A')}")
+                else:
+                    print("响应中没有results字段")
+                    keys = list(data.keys())
+                    print(f"响应键: {keys}")
+            else:
+                print(f"获取数据集失败: {result.status_code}")
+                print(f"响应内容: {result.content[:500]}")
+        else:
+            print(f"登录失败，状态码: {response.status_code}")
+            print(f"响应内容: {response.content[:500]}")
+            
+    except Exception as e:
+        print(f"发生错误: {e}")
+        import traceback
+        traceback.print_exc()
+
+if __name__ == "__main__":
+    test_api()

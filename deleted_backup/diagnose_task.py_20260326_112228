@@ -1,0 +1,125 @@
+import os
+import time
+import pickle
+from datetime import datetime
+
+print("=" * 60)
+print("任务二运行状况诊断")
+print("=" * 60)
+
+# 1. 检查进程
+print("1. 进程检查:")
+try:
+    import psutil
+    found = False
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'create_time']):
+        try:
+            cmdline = proc.info['cmdline']
+            if cmdline and any('day2' in str(arg).lower() for arg in cmdline):
+                found = True
+                create_time = datetime.fromtimestamp(proc.info['create_time'])
+                age = (datetime.now() - create_time).total_seconds() / 60
+                print(f"   发现进程: PID={proc.pid}, 运行时间: {age:.1f}分钟")
+                print(f"   命令行: {cmdline[:3]}...")
+        except:
+            continue
+    if not found:
+        print("   未发现day2进程")
+except ImportError:
+    print("   psutil未安装，无法检查进程")
+
+# 2. 检查进度文件
+print("\n2. 进度文件检查:")
+if os.path.exists('progress_day2.pkl') and os.path.exists('day2_total_pools.txt'):
+    with open('progress_day2.pkl', 'rb') as f:
+        progress = pickle.load(f)
+    with open('day2_total_pools.txt', 'r') as f2:
+        total = int(f2.read().strip())
+    
+    print(f"   当前进度: {progress}/{total}")
+    print(f"   完成比例: {progress/total*100:.2f}%")
+    
+    # 检查文件更新时间
+    mtime = os.path.getmtime('progress_day2.pkl')
+    last_update = datetime.fromtimestamp(mtime)
+    now = datetime.now()
+    minutes_ago = (now - last_update).total_seconds() / 60
+    
+    print(f"   最后更新: {last_update.strftime('%H:%M:%S')} ({minutes_ago:.1f}分钟前)")
+    
+    if minutes_ago > 30:
+        print("   [警告] 长时间未更新，可能已停止")
+    elif minutes_ago > 10:
+        print("   [注意] 较长时间未更新")
+    else:
+        print("   [正常] 最近有更新")
+else:
+    print("   进度文件不存在")
+
+# 3. 检查可能的终止原因
+print("\n3. 可能终止原因分析:")
+reasons = []
+
+if 'minutes_ago' in locals() and minutes_ago > 60:
+    reasons.append('长时间未更新 (>1小时)')
+
+if 'found' in locals() and not found:
+    reasons.append('无进程运行')
+
+if os.path.exists('day2_total_pools.txt'):
+    with open('day2_total_pools.txt', 'r') as f:
+        total = int(f.read().strip())
+    if total > 1000:
+        reasons.append(f'任务量过大 ({total}个任务池)')
+
+if reasons:
+    print("   可能原因:")
+    for i, reason in enumerate(reasons, 1):
+        print(f"     {i}. {reason}")
+else:
+    print("   无明显终止迹象")
+
+# 4. 系统资源检查
+print("\n4. 系统资源检查:")
+try:
+    import psutil
+    cpu_percent = psutil.cpu_percent(interval=1)
+    memory = psutil.virtual_memory()
+    print(f"   CPU使用率: {cpu_percent}%")
+    print(f"   内存使用率: {memory.percent}%")
+    
+    if cpu_percent > 90:
+        print("   [警告] CPU使用率过高")
+    if memory.percent > 90:
+        print("   [警告] 内存使用率过高")
+except:
+    print("   无法检查系统资源")
+
+# 5. 任务量分析
+print("\n5. 任务量分析:")
+if os.path.exists('day2_total_pools.txt'):
+    with open('day2_total_pools.txt', 'r') as f:
+        total = int(f.read().strip())
+    
+    print(f"   总任务池: {total}个")
+    print(f"   总计二阶alpha: {total * 3}个")
+    
+    if total > 500:
+        print("   [警告] 任务量非常大")
+        print(f"   按平均每个任务池10秒计算:")
+        print(f"   总时间: {total * 10 / 3600:.1f}小时")
+        print(f"   按当前进度3/{total}: 还需{(total-3) * 10 / 3600:.1f}小时")
+
+# 6. 建议
+print("\n6. 建议:")
+if 'found' in locals() and found:
+    print("   [保持] 进程在运行，继续保持")
+    print("   [监控] 定期检查进度")
+else:
+    print("   [重启] 无进程运行，需要重启")
+    if 'total' in locals() and total > 1000:
+        print("   [调整] 任务量过大，建议:")
+        print("     - 调整TOP_N参数从100减少到30-50")
+        print("     - 或分批运行")
+
+print("\n" + "=" * 60)

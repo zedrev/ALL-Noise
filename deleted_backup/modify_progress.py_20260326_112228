@@ -1,0 +1,30 @@
+#!/usr/bin/env python3
+import pickle
+import os
+
+print("=== 修改任务二进度文件 ===")
+
+# 删除旧日志
+log_files = ['task2_output.log', 'task2_manager.log']
+for log_file in log_files:
+    if os.path.exists(log_file):
+        os.remove(log_file)
+        print(f"删除: {log_file}")
+
+# 创建新的进度文件
+progress = {
+    'current_pool': 100,  # 从第100个任务池开始
+    'completed_pools': list(range(99)),  # 已完成0-98共99个任务池
+    'total_pools': 1155
+}
+
+with open('progress_day2.pkl', 'wb') as f:
+    pickle.dump(progress, f)
+
+print("进度文件已修改:")
+print(f"当前任务池: {progress['current_pool']}")
+print(f"已完成任务池: {len(progress['completed_pools'])}个 (0-98)")
+print(f"总任务池数: {progress['total_pools']}")
+print(f"进度: {progress['current_pool']}/{progress['total_pools']}")
+print("")
+print("修改完成！现在将从第100个任务池开始运行")

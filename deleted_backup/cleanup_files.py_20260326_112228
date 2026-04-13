@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+清理无用文件脚本
+运行前请确认要删除的文件
+"""
+import os
+import shutil
+import glob
+from datetime import datetime
+
+def print_file_list(title, files):
+    """打印文件列表"""
+    if not files:
+        return
+    print(f"\n{title} ({len(files)}个):")
+    for i, f in enumerate(files, 1):
+        size = os.path.getsize(f) if os.path.exists(f) else 0
+        print(f"  {i:2d}. {f:30s} ({size:,}字节)")
+
+def cleanup_files():
+    print("=" * 60)
+    print("清理无用文件")
+    print("=" * 60)
+    
+    current_dir = os.getcwd()
+    print(f"当前目录: {current_dir}")
+    
+    # 分类文件
+    all_files = os.listdir('.')
+    
+    # 1. 调试和测试文件（建议删除）
+    debug_files = [
+        'debug_datafields.py',
+        'test_api.py',
+        'test_api2.py',
+        'test_api3.py',
+        'diagnose_task.py',
+    ]
+    
+    # 2. 重复或过时脚本（建议删除）
+    obsolete_files = [
+        'clean_start_day2.py',
+        'run_day2_simple.py',
+        'run_all.py',
+        'modify_progress.py',
+        'fix_progress.py',
+        'monitor_progress.py',
+    ]
+    
+    # 3. 旧的备份文件（建议删除最旧的）
+    backup_patterns = [
+        'progress_day2_*.pkl',
+        '*_backup.*',
+        '*.bak',
+        '*_bak.*',
+    ]
+    
+    backup_files = []
+    for pattern in backup_patterns:
+        backup_files.extend(glob.glob(pattern))
+    
+    # 4. 旧的启动脚本（保留最新的）
+    old_bat_files = [
+        'start_day2.bat',
+        'start_day2_new.bat',
+        'start_task2_safely.bat',
+    ]
+    
+    # 显示要清理的文件
+    print_file_list("调试和测试文件", debug_files)
+    print_file_list("重复或过时脚本", obsolete_files)
+    print_file_list("备份文件", backup_files)
+    print_file_list("旧的启动脚本", old_bat_files)
+    
+    print("\n" + "=" * 60)
+    total_size = 0
+    
+    # 计算总大小
+    for file_list in [debug_files, obsolete_files, backup_files, old_bat_files]:
+        for f in file_list:
+            if os.path.exists(f):
+                total_size += os.path.getsize(f)
+    
+    print(f"可清理文件总大小: {total_size:,} 字节 ({total_size/1024:.1f} KB)")
+    
+    # 询问确认
+    print("\n[警告] 删除操作不可逆！")
+    confirm = input("确认删除上述文件吗？(输入 'yes' 确认): ")
+    
+    if confirm.lower() != 'yes':
+        print("取消清理操作")
+        return
+    
+    # 创建备份目录
+    backup_dir = os.path.join(current_dir, 'deleted_backup')
+    if not os.path.exists(backup_dir):
+        os.makedirs(backup_dir)
+    
+    # 执行删除（先移动到备份目录）
+    deleted_count = 0
+    deleted_size = 0
+    
+    for file_list in [debug_files, obsolete_files, backup_files, old_bat_files]:
+        for f in file_list:
+            if os.path.exists(f):
+                try:
+                    # 移动到备份目录
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    backup_name = f"{f}_{timestamp}"
+                    shutil.move(f, os.path.join(backup_dir, backup_name))
+                    
+                    size = os.path.getsize(os.path.join(backup_dir, backup_name))
+                    deleted_size += size
+                    deleted_count += 1
+                    print(f"  [已移动] {f} -> deleted_backup/{backup_name}")
+                except Exception as e:
+                    print(f"  [移动失败] {f}: {e}")
+    
+    print("\n" + "=" * 60)
+    print(f"清理完成！")
+    print(f"已移动 {deleted_count} 个文件到 deleted_backup/ 目录")
+    print(f"释放空间: {deleted_size:,} 字节 ({deleted_size/1024:.1f} KB)")
+    
+    # 显示剩余核心文件
+    print("\n剩余核心文件:")
+    core_files = [
+        'day1运行程序.py',
+        'day2 运行程序.py', 
+        'day3 运行程序.py',
+        'machine_lib.py',
+        'task2_controller.bat',
+        'start_day3_safely.bat',
+        'check_day2_status.py',
+        'check_day3_status.py',
+        '安全启动指南.md',
+        'README_ME_FIRST.txt',
+    ]
+    
+    for f in core_files:
+        if os.path.exists(f):
+            size = os.path.getsize(f)
+            print(f"  • {f:30s} ({size:,}字节)")
+    
+    # 显示剩余进度文件
+    print("\n剩余进度文件:")
+    progress_files = glob.glob('progress*.pkl') + glob.glob('*total_pools.txt')
+    for f in progress_files:
+        size = os.path.getsize(f)
+        print(f"  • {f:30s} ({size:,}字节)")
+    
+    print("\n提示：")
+    print("1. deleted_backup/ 目录中的文件可以随时恢复")
+    print("2. 如需永久删除，请手动删除 deleted_backup/ 目录")
+    print("3. 保持至少一份进度备份以防数据丢失")
+
+if __name__ == "__main__":
+    cleanup_files()

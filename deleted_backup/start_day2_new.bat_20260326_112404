@@ -1,0 +1,28 @@
+@echo off
+echo ============================================
+echo 启动任务二：二阶alpha模拟
+echo ============================================
+echo.
+echo 检查当前进度...
+python -c "import pickle, os; 
+if os.path.exists('progress_day2.pkl'): 
+  with open('progress_day2.pkl', 'rb') as f: p = pickle.load(f); 
+  with open('day2_total_pools.txt', 'r') as f2: t = f2.read().strip();
+  print(f'当前进度: {p}/{t}'); 
+  if p >= int(t): 
+    print('任务已完成，无需重启'); 
+    input('按回车退出...'); 
+    exit()
+  else:
+    print(f'从进度 {p}/{t} 继续运行')
+else:
+  print('无进度文件，重新开始')
+"
+echo.
+echo 启动day2程序...
+echo 程序将在后台运行...
+echo.
+python "day2 运行程序.py"
+echo.
+echo 程序已启动
+pause
