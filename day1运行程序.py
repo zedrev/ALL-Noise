@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 day1运行程序 - 多数据集Alpha生成
 支持从多个数据集获取字段，并生成跨数据集逻辑组合Alpha
@@ -90,6 +91,261 @@ def check_completion_status(total_pools=334):
         logging.error(f"检查完成状态时出错: {e}")
         return False
 
+def search_datafields_interactive(s):
+    """交互式搜索数据字段"""
+    print("\n" + "=" * 60)
+    print("          数据字段搜索")
+    print("=" * 60)
+    print("输入关键字搜索数据字段（支持字段ID和描述词）")
+    print("输入 'q' 返回主菜单")
+    print("输入 'v' 只显示 VECTOR 字段")
+    print("输入 'm' 只显示 MATRIX 字段")
+    print("输入 'a' 显示所有字段（当前数据集）")
+    print("输入 'all' 跨所有数据集搜索关键字")
+    print("输入 'act' 查找预估字段对应的真实字段")
+    print("输入 'ds' 选择数据集")
+    print("=" * 60)
+
+    # 默认过滤类型: None表示显示全部, 'VECTOR'只显示VECTOR, 'MATRIX'只显示MATRIX
+    type_filter = None
+    # 当前选中的数据集
+    current_dataset = 'pv1'
+    # 缓存所有数据集字段（避免重复请求）
+    dataset_cache = {}
+
+    # 预设的预估-真实字段映射关系（根据WorldQuant命名规则）
+    est_act_mapping = {
+        # analyst4 预估 -> 真实字段映射
+        'anl4_basicdetaillt_estvalue': 'anl4_basicdetaillt_actualvalue',
+        'anl4_dez1basicafv4_est': 'anl4_dez1basicafv4_actual',
+        'anl4_guibasicqfv4_est': 'anl4_guibasicqfv4_actual',
+        'anl4_baz1v110_estvalue': 'anl4_baz1v110_actualvalue',
+        'anl4_eaz1laf_estvalue': 'anl4_eaz1laf_actualvalue',
+        'anl4_ads1detailqfv110_estvalue': 'anl4_ads1detailqfv110_actualvalue',
+        'anl4_dez1basicafv4v104_est': 'anl4_dez1basicafv4v104_actual',
+        'anl4_dez1basicqfv4_est': 'anl4_dez1basicqfv4_actual',
+        'anl4_eaz2lqfv110_estvalue': 'anl4_eaz2lqfv110_actualvalue',
+        'anl4_guiafv4_est': 'anl4_guiafv4_actual',
+        'anl4_basicdetailqfv110_estvalue': 'anl4_basicdetailqfv110_actualvalue',
+        'anl4_detailltv4v104_est': 'anl4_detailltv4v104_actual',
+        'anl4_dez1afv4_est': 'anl4_dez1afv4_actual',
+        'anl4_dez1basicqfv4v104_est': 'anl4_dez1basicqfv4v104_actual',
+        'anl4_eaz2lafv110_estvalue': 'anl4_eaz2lafv110_actualvalue',
+        'anl4_eaz2lltv110_estvalue': 'anl4_eaz2lltv110_actualvalue',
+        'anl4_guiqfv4_est': 'anl4_guiqfv4_actual',
+        'anl4_ads1detailafv110_estvalue': 'anl4_ads1detailafv110_actualvalue',
+        'anl4_detailrecv4v104_est': 'anl4_detailrecv4v104_actual',
+        'anl4_dez1qfv4_est': 'anl4_dez1qfv4_actual',
+        'anl4_dez1safv4_est': 'anl4_dez1safv4_actual',
+        'anl4_eaz1lqfv110_estvalue': 'anl4_eaz1lqfv110_actualvalue',
+        # sales_estimate 系列 -> actual
+        'sales_estimate_value': 'sales_actual_value',
+        'sales_estimate_maximum': 'sales_actual_maximum',
+        'sales_estimate_minimum': 'sales_actual_minimum',
+        'sales_estimate_maximum_quarterly': 'sales_actual_maximum_quarterly',
+        'sales_estimate_minimum_quarterly': 'sales_actual_minimum_quarterly',
+        # dividend_estimate -> actual
+        'dividend_estimate_value': 'dividend_actual_value',
+        # earnings 系列
+        'earnings_per_share_median_value': 'earnings_per_share_actual_median',
+        'earnings_per_share_maximum': 'earnings_per_share_actual_maximum',
+        'earnings_per_share_minimum': 'earnings_per_share_actual_minimum',
+    }
+
+    while True:
+        print()
+        keyword = input("请输入关键字或命令(v/m/a/all/act/ds/q): ").strip()
+
+        if keyword.lower() == 'q':
+            print("返回主菜单")
+            return
+        elif keyword.lower() == 'v':
+            type_filter = 'VECTOR'
+            print(f"已切换为只显示 VECTOR 字段")
+            continue
+        elif keyword.lower() == 'm':
+            type_filter = 'MATRIX'
+            print(f"已切换为只显示 MATRIX 字段")
+            continue
+        elif keyword.lower() == 'a':
+            type_filter = None
+            print(f"已切换为显示所有字段")
+            continue
+        elif keyword.lower() == 'all':
+            # 跨所有数据集搜索关键字 - 使用WQ API原生搜索
+            keyword = input("输入要搜索的关键字: ").strip()
+            if not keyword:
+                print("请输入有效的关键字")
+                continue
+            
+            print(f"\n正在跨所有数据集搜索 '{keyword}' (使用WQ原生搜索)...")
+            print("这可能需要一些时间...\n")
+            
+            all_results = []
+            
+            for ds in ALL_DATASETS:
+                ds_id = ds['id']
+                print(f"  搜索数据集 [{ds_id}]...", end=" ", flush=True)
+                try:
+                    # 直接使用WQ API搜索功能
+                    df = get_datafields(s, dataset_id=ds_id, region=REGION, universe=UNIVERSE, search=keyword)
+                    
+                    if not df.empty:
+                        df['_dataset'] = ds_id
+                        all_results.append(df)
+                        print(f"找到 {len(df)} 个")
+                    else:
+                        print("无匹配")
+                except Exception as e:
+                    print(f"失败: {e}")
+            
+            if not all_results:
+                print(f"\n未在所有数据集中找到包含 '{keyword}' 的数据字段")
+                continue
+            
+            # 合并结果
+            df_all = pd.concat(all_results, ignore_index=True)
+            
+            # 根据类型过滤
+            if type_filter:
+                df_all = df_all[df_all['type'] == type_filter]
+            
+            filter_desc = f" ({type_filter}类型)" if type_filter else ""
+            print(f"\n" + "=" * 100)
+            print(f"搜索结果: 共找到 {len(df_all)} 个包含 '{keyword}' 的字段{filter_desc}")
+            print("=" * 100)
+            print(f"{'数据集':15s} | {'字段ID':40s} | {'类型':10s} | {'Description'}")
+            print("-" * 100)
+            
+            field_ids = []
+            for _, row in df_all.iterrows():
+                field_id = row.get('id', '')
+                field_type = row.get('type', '')
+                field_desc = str(row.get('description', ''))[:45] if row.get('description') else ''
+                ds_name = row.get('_dataset', current_dataset)
+                print(f"  {ds_name:13s} | {field_id:40s} | {field_type:10s} | {field_desc}")
+                field_ids.append(field_id)
+            
+            print("-" * 100)
+            print(f"\n所有字段ID列表（逗号分隔，可直接复制）:")
+            print("  " + ",".join(field_ids))
+            print()
+            continue
+        elif keyword.lower() == 'ds':
+            # 选择数据集
+            print("\n可用数据集:")
+            for i, ds in enumerate(ALL_DATASETS, 1):
+                print(f"  {i:2d}. {ds['id']:16s} - {ds['desc']}")
+            ds_input = input("选择数据集编号 (默认1=pv1): ").strip()
+            try:
+                idx = int(ds_input) if ds_input else 1
+                current_dataset = ALL_DATASETS[idx - 1]['id'] if 1 <= idx <= len(ALL_DATASETS) else 'pv1'
+            except:
+                current_dataset = 'pv1'
+            print(f"已切换到数据集: {current_dataset}")
+            # 清除缓存
+            if current_dataset in dataset_cache:
+                del dataset_cache[current_dataset]
+            continue
+        elif keyword.lower() == 'act':
+            # 查找预估字段对应的真实字段
+            print("\n" + "=" * 60)
+            print("          预估 -> 真实字段映射")
+            print("=" * 60)
+            print("正在从 analyst4 数据集获取真实值字段...")
+
+            df_all = get_datafields(s, dataset_id='analyst4', region=REGION, universe=UNIVERSE)
+            
+            if df_all.empty:
+                print("获取 analyst4 字段失败")
+                continue
+            
+            # 提取所有真实字段ID
+            actual_fields = set(df_all['id'].tolist()) if 'id' in df_all.columns else set()
+            
+            # 查找 _actual 或 actualvalue 后缀的字段
+            actual_mapping = {}
+            for est_field, guess_actual in est_act_mapping.items():
+                if guess_actual in actual_fields:
+                    actual_mapping[est_field] = guess_actual
+                else:
+                    # 尝试其他变体
+                    candidates = [
+                        guess_actual,
+                        est_field.replace('_estvalue', '_actualvalue').replace('_est', '_actual'),
+                        est_field.replace('estimate', 'actual'),
+                        est_field.replace('_est_', '_actual_'),
+                    ]
+                    for cand in candidates:
+                        if cand in actual_fields:
+                            actual_mapping[est_field] = cand
+                            break
+            
+            if actual_mapping:
+                print(f"\n找到 {len(actual_mapping)} 个对应的真实字段:")
+                print("-" * 80)
+                print(f"{'预估字段':45s} -> {'真实字段'}")
+                print("-" * 80)
+                actual_list = []
+                for est, act in actual_mapping.items():
+                    print(f"  {est:43s} -> {act}")
+                    actual_list.append(act)
+                print("-" * 80)
+                print("\n真实字段ID列表（可直接复制）:")
+                print("  " + ",".join(actual_list))
+            else:
+                print("未在 analyst4 中找到对应的真实字段")
+            
+            print()
+            continue
+        
+        if not keyword:
+            print("请输入有效的关键字")
+            continue
+
+        print(f"\n正在使用 WQ API 搜索 '{keyword}' (数据集: {current_dataset})...")
+
+        # 直接调用 WQ API 的搜索功能
+        df = get_datafields(s, dataset_id=current_dataset, region=REGION, universe=UNIVERSE, search=keyword)
+
+        if df.empty:
+            print(f"未在 [{current_dataset}] 数据集中找到包含 '{keyword}' 的数据字段")
+            print(f"提示: 输入 'all' 可跨所有数据集搜索，或输入 'ds' 切换数据集")
+            continue
+
+        # 根据类型过滤
+        if type_filter:
+            df = df[df['type'] == type_filter]
+
+        if df.empty:
+            filter_name = "VECTOR" if type_filter == 'VECTOR' else "MATRIX"
+            print(f"未找到类型为 {filter_name} 的字段")
+            continue
+
+        filter_desc = f" ({type_filter}类型)" if type_filter else ""
+        print(f"\n找到 {len(df)} 个匹配字段{filter_desc} (数据集: {current_dataset}):")
+        print("-" * 100)
+        print(f"{'字段ID':40s} | {'类型':10s} | {'Description'}")
+        print("-" * 100)
+
+        # 显示字段信息
+        field_ids = []
+        for _, row in df.iterrows():
+            field_id = row.get('id', '')
+            field_type = row.get('type', '')
+            field_desc = str(row.get('description', ''))[:50] if row.get('description') else ''
+            print(f"  {field_id:38s} | {field_type:10s} | {field_desc}")
+            field_ids.append(field_id)
+
+        print("-" * 100)
+        print(f"共 {len(df)} 个字段")
+        print()
+
+        # 输出逗号分隔的格式
+        print("字段ID列表（可直接复制）:")
+        print("  " + ",".join(field_ids))
+        print()
+
 def get_user_config():
     """获取用户配置 - 支持多数据集选择"""
     global SELECTED_DATASETS, ENABLE_CROSS_DATASET, FIELDS_PER_DATASET, ALPHA_LIMIT
@@ -97,6 +353,10 @@ def get_user_config():
     print("=" * 60)
     print("          世界量化 - 任务一配置")
     print("=" * 60)
+    print()
+    print("功能菜单:")
+    print("  0. 搜索数据字段（输入关键字查找字段）")
+    print("  1-7. 选择数据集编号")
     print()
     
     # 数据集多选
@@ -114,6 +374,15 @@ def get_user_config():
     raw_input = input("请选择数据集: ").strip().lower()
     
     selected_ids = []
+    
+    if raw_input == '0':
+        # 先登录再搜索
+        s = login()
+        search_datafields_interactive(s)
+        print()
+        raw_input = input("请选择数据集: ").strip().lower()
+        if raw_input == 'q':
+            return False
     
     if raw_input == 'all':
         selected_ids = [ds['id'] for ds in ALL_DATASETS]
@@ -454,5 +723,235 @@ def main():
     except Exception as e:
         logging.error(f"Unexpected error: {e}")
 
+
+def quick_field_backtest():
+    """
+    极简字段筛选回测 - Alpha来自数据，不来自算子
+
+    策略核心:
+    - 80% 精力筛选字段（高覆盖率 >90%，低使用频率）
+    - 20% 精力表达式设计
+    - 只用 rank(ts_delta(field, N)) 一个模板
+    - N 从 [5, 10, 20, 60, 120] 中选择
+    - 过 Sharpe 1.0 的再加 group/neutralization 优化
+    """
+    print("\n" + "=" * 60)
+    print("     极简字段筛选回测 - 字段优先策略")
+    print("=" * 60)
+    print()
+    print("核心理念: Alpha来自数据，不来自算子")
+    print("冷门高质量字段 + rank + ts_delta > 热门字段 + 复杂嵌套")
+    print()
+    print("策略:")
+    print("  1. 筛选高覆盖率(>90%)、低使用频率的字段")
+    print("  2. 只用一个模板: rank(ts_delta(field, N))")
+    print("  3. N 从 [5, 10, 20, 60, 120] 中选择")
+    print("  4. Sharpe >= 1.0 的标记为候选因子")
+    print("=" * 60)
+    print()
+
+    # 1. 登录
+    s = login()
+
+    # 2. 选择数据集
+    print("可用数据集:")
+    for i, ds in enumerate(ALL_DATASETS, 1):
+        print(f"  {i:2d}. {ds['id']:16s} - {ds['desc']}")
+    print()
+
+    raw_input = input("请选择数据集编号 (默认1=pv1): ").strip()
+    try:
+        idx = int(raw_input) if raw_input else 1
+        dataset_id = ALL_DATASETS[idx - 1]['id'] if 1 <= idx <= len(ALL_DATASETS) else 'pv1'
+    except:
+        dataset_id = 'pv1'
+
+    # 3. 获取字段
+    print(f"\n正在从 [{dataset_id}] 获取字段...")
+    df = get_datafields(s, dataset_id=dataset_id, region=REGION, universe=UNIVERSE, delay=DELAY)
+
+    if df.empty:
+        print("获取字段失败")
+        return
+
+    print(f"共获取 {len(df)} 个字段")
+
+    # 4. 字段筛选标准
+    print("\n" + "=" * 60)
+    print("字段筛选标准")
+    print("=" * 60)
+
+    # 覆盖率筛选 (默认 >90%)
+    print("\n覆盖率筛选 (留空使用默认值 90):")
+    cov_input = input("最低覆盖率 % (0-100): ").strip()
+    min_coverage = int(cov_input) if cov_input else 90
+
+    # 使用频率筛选 (默认低 - 即 userCount 低)
+    print("\n使用频率筛选:")
+    print("  1. 极低 (< 50 用户) - 推荐冷门高质")
+    print("  2. 低 (< 200 用户)")
+    print("  3. 中 (< 500 用户)")
+    print("  4. 全部不限制")
+    freq_choice = input("请选择 (1/2/3/4, 默认1): ").strip() or "1"
+
+    freq_map = {"1": 50, "2": 200, "3": 500, "4": None}
+    max_users = freq_map.get(freq_choice, 50)
+
+    # 字段类型
+    print("\n字段类型:")
+    print("  1. MATRIX 字段")
+    print("  2. VECTOR 字段")
+    print("  3. 全部字段")
+    type_choice = input("请选择 (1/2/3, 默认1): ").strip() or "1"
+
+    # 应用筛选
+    df_filtered = df.copy()
+
+    if 'coverage' in df_filtered.columns:
+        df_filtered = df_filtered[df_filtered['coverage'] > min_coverage / 100]
+        print(f"\n覆盖率 > {min_coverage}%: {len(df_filtered)} 个字段")
+
+    if max_users and 'userCount' in df_filtered.columns:
+        df_filtered = df_filtered[df_filtered['userCount'] < max_users]
+        print(f"使用频率 < {max_users} 用户: {len(df_filtered)} 个字段")
+
+    if type_choice == "1":
+        df_filtered = df_filtered[df_filtered['type'] == "MATRIX"]
+    elif type_choice == "2":
+        df_filtered = df_filtered[df_filtered['type'] == "VECTOR"]
+
+    print(f"最终筛选: {len(df_filtered)} 个候选字段")
+    print()
+
+    # 5. 显示候选字段
+    if len(df_filtered) > 0:
+        print("候选字段预览:")
+        display_cols = ['id', 'name', 'coverage', 'userCount'] if 'coverage' in df_filtered.columns else ['id', 'name', 'userCount']
+        available_cols = [c for c in display_cols if c in df_filtered.columns]
+        print(df_filtered[available_cols].head(10).to_string(index=False))
+        if len(df_filtered) > 10:
+            print(f"... 还有 {len(df_filtered) - 10} 个字段")
+        print()
+
+    # 6. 时间窗口
+    print("=" * 60)
+    print("时间窗口设置 (ts_delta 参数)")
+    print("=" * 60)
+    print("推荐: [5, 10, 20, 60, 120]")
+    windows_input = input("输入逗号分隔的时间窗口 (留空使用默认): ").strip()
+    if windows_input:
+        try:
+            windows = [int(w.strip()) for w in windows_input.split(',')]
+        except:
+            windows = [5, 10, 20, 60, 120]
+    else:
+        windows = [5, 10, 20, 60, 120]
+    print(f"使用时间窗口: {windows}")
+
+    # 7. 中性化方式
+    print("\n中性化方式:")
+    print("  1. SUBINDUSTRY")
+    print("  2. INDUSTRY")
+    print("  3. SECTOR")
+    print("  4. MARKET")
+    print("  5. NONE (首轮测试用)")
+    neut_choice = input("请选择 (1/2/3/4/5, 默认5): ").strip() or "5"
+
+    neut_map = {"1": "SUBINDUSTRY", "2": "INDUSTRY", "3": "SECTOR", "4": "MARKET", "5": "NONE"}
+    neut = neut_map.get(neut_choice, "NONE")
+
+    # 8. 预估数量
+    all_fields = df_filtered['id'].tolist()
+    vector_count = len([f for f in all_fields if f in df_filtered[df_filtered['type'] == 'VECTOR']['id'].tolist()])
+    total_alphas = len(all_fields) * len(windows)
+    print(f"\n预估Alpha数量: {len(all_fields)} 字段 x {len(windows)} 窗口 = {total_alphas}")
+    print(f"  (其中 VECTOR 字段约 {vector_count} 个将用 vec_avg 处理)")
+
+    if total_alphas == 0:
+        print("没有符合条件的字段，取消操作")
+        return
+
+    # 9. 确认
+    print()
+    confirm = input("确认开始回测? (y/n): ").strip().lower()
+    if confirm != 'y':
+        print("取消操作")
+        return
+
+    # 10. 分离 VECTOR 和 MATRIX 字段
+    vector_fields = df_filtered[df_filtered['type'] == 'VECTOR']['id'].tolist()
+    matrix_fields = df_filtered[df_filtered['type'] == 'MATRIX']['id'].tolist()
+
+    print(f"\n字段类型分布:")
+    print(f"  VECTOR 字段: {len(vector_fields)} 个 (将使用 vec_avg 处理)")
+    print(f"  MATRIX 字段: {len(matrix_fields)} 个 (直接使用)")
+
+    # 11. 生成Alpha表达式
+    print(f"\n正在生成Alpha表达式...")
+    alpha_list = []
+
+    # MATRIX 字段: 直接使用
+    for field in matrix_fields:
+        for n in windows:
+            # 极简模板: rank(ts_delta(field, N))
+            alpha_expr = f"rank(ts_delta({field}, {n}))"
+            alpha_list.append((alpha_expr, 0))
+
+    # VECTOR 字段: 使用 vec_avg 处理
+    for field in vector_fields:
+        for n in windows:
+            # VECTOR 字段需要 vec_avg 转换为标量
+            alpha_expr = f"rank(ts_delta(vec_avg({field}), {n}))"
+            alpha_list.append((alpha_expr, 0))
+
+    print(f"生成完成: {len(alpha_list)} 个Alpha")
+    print(f"  - MATRIX: {len(matrix_fields) * len(windows)} 个")
+    print(f"  - VECTOR: {len(vector_fields) * len(windows)} 个 (已用 vec_avg 处理)")
+
+    # 11. 开始回测
+    print(f"\n开始回测 (中性化={neut})...")
+    print("提示: Sharpe >= 1.0 的Alpha为候选因子")
+
+    pools = load_task_pool_single(alpha_list, POOL_SIZE)
+    single_simulate(pools, neut, REGION, UNIVERSE, 0)
+
+    # 12. 结果分析提示
+    print("\n" + "=" * 60)
+    print("回测完成!")
+    print("=" * 60)
+    print()
+    print("下一步建议:")
+    print("  1. 登录 WorldQuant 网站查看回测结果")
+    print("  2. 筛选 Sharpe >= 1.0 的Alpha")
+    print("  3. 对候选Alpha添加一层 group/neutralization 优化:")
+    print("     - group_neutralize(rank(ts_delta(field, N)), subindustry)")
+    print("     - group_rank(rank(ts_delta(field, N)), subindustry)")
+    print("  4. 再次回测优化后的Alpha")
+    print()
+    print("核心理念回顾:")
+    print("  Alpha来自数据，不来自算子")
+    print("  冷门高质量字段 + rank + ts_delta > 热门字段 + 复杂嵌套")
+    print("=" * 60)
+
+
 if __name__ == "__main__":
-    main()
+    print("=" * 60)
+    print("          世界量化 - 功能选择")
+    print("=" * 60)
+    print()
+    print("  1. 任务一：多数据集Alpha生成")
+    print("  2. 搜索数据字段")
+    print("  3. 极简字段筛选回测 (字段优先策略)")
+    print()
+    print("=" * 60)
+
+    choice = input("请选择功能 (1/2/3): ").strip()
+
+    if choice == "2":
+        # 搜索功能需要先登录
+        s = login()
+        search_datafields_interactive(s)
+    elif choice == "3":
+        quick_field_backtest()
+    else:
+        main()

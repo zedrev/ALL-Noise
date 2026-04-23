@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import requests
 from os import environ, path
 from time import sleep
@@ -254,67 +255,90 @@ def get_datafields(
             return pd.DataFrame()
         
     else:
+        # 使用WQ平台原生搜索功能
         url_template = "https://api.worldquantbrain.com/data-fields?" +\
             f"&instrumentType={instrument_type}" +\
-            f"&region={region}&delay={str(delay)}&universe={universe}&limit=50" +\
+            f"&region={region}&delay={str(delay)}&universe={universe}" +\
+            (f"&dataset.id={dataset_id}" if dataset_id else "") +\
+            f"&limit=50" +\
             f"&search={search}" +\
             "&offset={x}"
-        count = 100  # 搜索时默认获取前100条
-    
-    datafields_list = []
-    for x in range(0, count, 50):
-        max_retries = 3
-        retry_delay = 10  # 10秒
         
-        for attempt in range(max_retries):
-            try:
-                datafields = s.get(url_template.format(x=x))
-                
-                if datafields.status_code == 429:
-                    # 速率限制，等待后重试
-                    print(f"第{x}页: API速率限制 (429)，等待 {retry_delay}秒后重试 (尝试 {attempt+1}/{max_retries})...")
-                    time.sleep(retry_delay)
-                    retry_delay += 5  # 每次重试增加等待时间
-                    continue
-                elif datafields.status_code != 200:
-                    print(f"获取第{x}页失败，状态码: {datafields.status_code}")
-                    if attempt == max_retries - 1:
-                        continue  # 最后一次尝试失败后跳过这一页
-                    else:
-                        # 等待后重试
+        # 先获取第一页确认搜索有效性和总数
+        try:
+            first_page = s.get(url_template.format(x=0))
+            if first_page.status_code != 200:
+                print(f"搜索请求失败，状态码: {first_page.status_code}")
+                return pd.DataFrame()
+            
+            first_data = first_page.json()
+            if 'count' in first_data:
+                count = min(first_data['count'], 500)  # 限制最多500条
+                print(f"搜索结果总数: {count}")
+            else:
+                count = 0
+                print(f"搜索无结果")
+                return pd.DataFrame()
+            
+            if 'results' in first_data and first_data['results']:
+                datafields_list = [first_data['results']]
+            else:
+                return pd.DataFrame()
+        except Exception as e:
+            print(f"搜索请求错误: {e}")
+            return pd.DataFrame()
+    
+    # 通用分页获取逻辑（非搜索模式会设置count/url_template，搜索模式会跳过）
+    if not datafields_list:  # 只有在datafields_list为空时才执行
+        for x in range(0, count, 50):
+            max_retries = 3
+            retry_delay = 10
+            
+            for attempt in range(max_retries):
+                try:
+                    datafields = s.get(url_template.format(x=x))
+                    
+                    if datafields.status_code == 429:
+                        print(f"第{x}页: API速率限制 (429)，等待 {retry_delay}秒后重试...")
                         time.sleep(retry_delay)
                         retry_delay += 5
                         continue
-                
-                # 成功获取
-                data_json = datafields.json()
-                if 'results' not in data_json:
-                    print(f"第{x}页响应中没有'results'字段: {list(data_json.keys())}")
+                    elif datafields.status_code != 200:
+                        print(f"获取第{x}页失败，状态码: {datafields.status_code}")
+                        if attempt == max_retries - 1:
+                            break
+                        else:
+                            time.sleep(retry_delay)
+                            retry_delay += 5
+                            continue
+                    
+                    data_json = datafields.json()
+                    if 'results' not in data_json:
+                        print(f"第{x}页响应中没有'results'字段")
+                        break
+                        
+                    datafields_list.append(data_json['results'])
+                    sleep(2)
                     break
                     
-                datafields_list.append(data_json['results'])
-                sleep(3)  # 添加延时避免频率限制
-                break  # 跳出重试循环
-                
-            except Exception as e:
-                print(f"获取第{x}页时发生错误: {e}")
-                if attempt == max_retries - 1:
-                    continue  # 最后一次尝试失败后跳过这一页
-                else:
-                    time.sleep(retry_delay)
-                    retry_delay += 5
-                    continue
-        else:
-            # 所有重试都失败了
-            print(f"第{x}页: 多次尝试失败，跳过这一页")
- 
+                except Exception as e:
+                    print(f"获取第{x}页时发生错误: {e}")
+                    if attempt == max_retries - 1:
+                        break
+                    else:
+                        time.sleep(retry_delay)
+                        retry_delay += 5
+                        continue
+            else:
+                print(f"第{x}页: 多次尝试失败，跳过这一页")
+
     if not datafields_list:
         print("没有获取到任何数据字段")
         return pd.DataFrame()
         
     datafields_list_flat = [item for sublist in datafields_list for item in sublist]
     print(f"成功获取 {len(datafields_list_flat)} 个数据字段")
- 
+
     datafields_df = pd.DataFrame(datafields_list_flat)
     return datafields_df
 
@@ -528,87 +552,201 @@ def load_task_pool_single(alpha_list, limit_of_single_simulations):
         pool : [ alpha_num/3 * [3 * (alpha, decay)] ] 
     '''
 
+
     pool = [alpha_list[i:i + limit_of_single_simulations] for i in range(0, len(alpha_list), limit_of_single_simulations)]
     return pool
 
 
 def single_simulate(alpha_pool, neut, region, universe, start):
+    """
+    模拟Alpha，支持断线重连的递归版本
 
-    s = login()
+    参数:
+        alpha_pool: Alpha池列表
+        neut: 中性化方式
+        region: 地区
+        universe: 股票池
+        start: 起始索引
 
-    brain_api_url = 'https://api.worldquantbrain.com'
+    增强功能:
+        - 自动检测认证失效(401/403)并重新认证
+        - 自动检测连接错误并重试
+        - 完善的错误日志记录
+    """
+    _single_simulate_recursive(alpha_pool, neut, region, universe, start, pool_index=0)
 
-    for x, task in enumerate(alpha_pool):
-        if x < start: continue
-        progress_urls = []
-        for y, (alpha, decay) in enumerate(task):
 
-            # [迭代修改点] 模拟参数配置
-            # - decay:          衰减系数，控制换手率
-            # - neutralization: 中性化方式 (SUBINDUSTRY/MARKET/SECTOR/INDUSTRY/NONE)
-            # - truncation:     截断阈值，控制极端持仓
-            # - testPeriod:     回测期 (P0Y=全部/P1Y=近1年/P2Y=近2年)
-            # - pasteurization: 巴氏消毒 (ON/OFF)
-            # - unitHandling:   单位处理 (VERIFY/NONE)
-            simulation_data = {
-                'type': 'REGULAR',
-                'settings': {
-                    'instrumentType': 'EQUITY',
-                    'region': region, 
-                    'universe': universe, 
-                    'delay': 1,
-                    'decay': decay, 
-                    'neutralization': neut,
-                    'truncation': 0.08,
-                    'pasteurization': 'ON',
-                    'testPeriod': 'P0Y',
-                    'unitHandling': 'VERIFY',
-                    'nanHandling': 'ON',
-                    'language': 'FASTEXPR',
-                    'visualization': False,
-                },
-            'regular': alpha}
+def _single_simulate_recursive(alpha_pool, neut, region, universe, start, pool_index=0, max_retries=3, retry_delay=10):
+    """
+    递归模拟Alpha，支持断线重连
 
-            try:
-                simulation_response = s.post('https://api.worldquantbrain.com/simulations', json=simulation_data)
-                simulation_progress_url = simulation_response.headers['Location']
+    参数:
+        alpha_pool: Alpha池列表
+        neut: 中性化方式
+        region: 地区
+        universe: 股票池
+        start: 当前池内的起始索引
+        pool_index: 池索引
+        max_retries: 最大重试次数
+        retry_delay: 重试延迟(秒)
+    """
+    # 基准情况：如果已处理完所有池，返回
+    if pool_index >= len(alpha_pool):
+        print("Simulate done - all pools completed")
+        return
+
+    task = alpha_pool[pool_index]
+    if pool_index < start:
+        return _single_simulate_recursive(alpha_pool, neut, region, universe, start, pool_index + 1, max_retries, retry_delay)
+
+    print(f"\n{'='*60}")
+    print(f"处理任务池 {pool_index + 1}/{len(alpha_pool)}")
+    print(f"{'='*60}")
+
+    # 确保有有效的session
+    try:
+        s = login()
+    except Exception as e:
+        print(f"认证失败: {e}")
+        if max_retries > 0:
+            print(f"等待 {retry_delay} 秒后重试...")
+            sleep(retry_delay)
+            return _single_simulate_recursive(alpha_pool, neut, region, universe, start, pool_index, max_retries - 1, retry_delay)
+        else:
+            print("达到最大重试次数，程序退出")
+            return
+
+    progress_urls = []
+    failed_alphas = []  # 记录失败的alpha索引
+
+    # 第一步：提交所有Alpha
+    print(f"正在提交 {len(task)} 个Alpha...")
+    for y, (alpha, decay) in enumerate(task):
+        if y < start and pool_index == start:
+            continue
+
+        simulation_data = {
+            'type': 'REGULAR',
+            'settings': {
+                'instrumentType': 'EQUITY',
+                'region': region,
+                'universe': universe,
+                'delay': 1,
+                'decay': decay,
+                'neutralization': neut,
+                'truncation': 0.08,
+                'pasteurization': 'ON',
+                'testPeriod': 'P0Y',
+                'unitHandling': 'VERIFY',
+                'nanHandling': 'ON',
+                'language': 'FASTEXPR',
+                'visualization': False,
+            },
+            'regular': alpha
+        }
+
+        try:
+            simulation_response = s.post('https://api.worldquantbrain.com/simulations', json=simulation_data)
+
+            # 检测认证错误
+            if simulation_response.status_code == 401 or simulation_response.status_code == 403:
+                print(f"检测到认证失效 (状态码: {simulation_response.status_code})，重新认证...")
+                sleep(retry_delay)
+                new_s = login()
+                # 重试当前alpha
+                retry_resp = new_s.post('https://api.worldquantbrain.com/simulations', json=simulation_data)
+                if retry_resp.status_code in (200, 201):
+                    progress_urls.append(retry_resp.headers['Location'])
+                else:
+                    print(f"重试失败: {retry_resp.status_code} - {alpha[:50]}...")
+                    failed_alphas.append((y, alpha))
+                s = new_s
+                continue
+
+            if simulation_response.status_code not in (200, 201):
+                print(f"提交失败 ({simulation_response.status_code}): {alpha[:50]}...")
+                failed_alphas.append((y, alpha))
+                continue
+
+            simulation_progress_url = simulation_response.headers.get('Location')
+            if simulation_progress_url:
                 progress_urls.append(simulation_progress_url)
-            except:
-                print("location key error: %s"%simulation_response.content)
-                sleep(600)
-                s = login()
+            else:
+                print(f"无Location头: {simulation_response.content[:100]}")
+                failed_alphas.append((y, alpha))
 
-        print("task %d post done"%(x))
-
-        for j, progress in enumerate(progress_urls):
+        except requests.exceptions.ConnectionError as e:
+            print(f"连接错误: {str(e)[:50]}...")
+            print(f"等待 {retry_delay} 秒后重试...")
+            sleep(retry_delay)
             try:
-                while True:
-                    simulation_progress = s.get(progress)
-                    if simulation_progress.headers.get("Retry-After", 0) == 0:
-                        break
-                    #print("Sleeping for " + simulation_progress.headers["Retry-After"] + " seconds")
-                    sleep(float(simulation_progress.headers["Retry-After"]))
+                s = login()
+                print("重新认证成功")
+            except Exception as auth_error:
+                print(f"重新认证失败: {auth_error}")
+                failed_alphas.append((y, alpha))
+        except Exception as e:
+            print(f"提交异常: {str(e)[:50]}...")
+            failed_alphas.append((y, alpha))
 
-                status = simulation_progress.json().get("status", 0)
-                if status != "COMPLETE" and status != "WARNING":
-                    print("Not complete : %s"%(progress))
+    print(f"任务池 {pool_index + 1} 提交完成: 成功 {len(progress_urls)}, 失败 {len(failed_alphas)}")
 
-                """
-                alpha_id = simulation_progress.json()["alpha"]
+    # 第二步：等待并检查模拟结果
+    print(f"等待 {len(progress_urls)} 个模拟结果...")
+    completed_count = 0
+    failed_results = []
 
-                set_alpha_properties(s,
-                        alpha_id,
-                        name = "%s"%name,
-                        color = None,)
-                """
-            except KeyError:
-                print("look into: %s"%progress)
+    for j, progress in enumerate(progress_urls):
+        try:
+            while True:
+                simulation_progress = s.get(progress)
+                retry_after = simulation_progress.headers.get("Retry-After", "0")
+
+                if retry_after == "0" or retry_after == 0:
+                    break
+                sleep(float(retry_after))
+
+            resp_json = simulation_progress.json()
+            status = resp_json.get("status", 0)
+            alpha_id = resp_json.get("alpha", "N/A")
+
+            if status in ("COMPLETE", "WARNING"):
+                completed_count += 1
+                if status == "WARNING":
+                    print(f"  [{j+1}] {alpha_id}: {status}")
+            else:
+                print(f"  [{j+1}] {alpha_id}: 状态={status}")
+                failed_results.append(progress)
+
+        except requests.exceptions.ConnectionError as e:
+            print(f"连接错误 (检查结果): {str(e)[:50]}...")
+            print("尝试重新连接...")
+            sleep(retry_delay)
+            try:
+                s = login()
             except:
-                print("other")
+                pass
+            failed_results.append(progress)
+        except KeyError as e:
+            print(f"响应格式错误: {e} - {progress}")
+            failed_results.append(progress)
+        except Exception as e:
+            print(f"检查结果异常: {str(e)[:50]}...")
+            failed_results.append(progress)
 
-        print("task %d simulate done"%(x))
-    
-    print("Simulate done")
+    print(f"任务池 {pool_index + 1} 完成: 成功 {completed_count}/{len(progress_urls)}, 失败 {len(failed_results)}")
+
+    if failed_alphas:
+        print(f"提交失败的Alpha: {len(failed_alphas)} 个")
+    if failed_results:
+        print(f"结果检查失败的URL: {len(failed_results)} 个")
+
+    print(f"任务池 {pool_index + 1} 模拟完成")
+
+    # 递归处理下一个池
+    return _single_simulate_recursive(alpha_pool, neut, region, universe, 0, pool_index + 1, max_retries, retry_delay)
+
+
 def fnd6_fields(pc):
     """[旧版/已废弃] 字段比率函数 - 与上方同名函数功能不同
     此版本生成简单比率 field_a/field_b（无 winsorize/ts_backfill 包装）。
