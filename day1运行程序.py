@@ -191,9 +191,15 @@ def search_datafields_interactive(s):
                     df = get_datafields(s, dataset_id=ds_id, region=REGION, universe=UNIVERSE, search=keyword)
                     
                     if not df.empty:
-                        df['_dataset'] = ds_id
-                        all_results.append(df)
-                        print(f"找到 {len(df)} 个")
+                        # 本地过滤：只保留description中包含关键词的记录
+                        df_filtered = df[df['description'].str.contains(keyword, case=False, na=False)]
+                        if not df_filtered.empty:
+                            df_filtered = df_filtered.copy()
+                            df_filtered['_dataset'] = ds_id
+                            all_results.append(df_filtered)
+                            print(f"找到 {len(df_filtered)} 个")
+                        else:
+                            print("无匹配")
                     else:
                         print("无匹配")
                 except Exception as e:
